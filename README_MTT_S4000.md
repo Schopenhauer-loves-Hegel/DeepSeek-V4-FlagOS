@@ -2,41 +2,58 @@
 
 ## 1. 下载权重
 
-从 HuggingFace 下载 DeepSeek-V4 模型权重到本地共享存储：
+从 HuggingFace 下载 DeepSeek-V4 原始权重：
 
 ```bash
-# 需要安装 huggingface-cli
 huggingface-cli download deepseek-ai/DeepSeek-V4 --local-dir /path/to/DeepSeek-V4-HF
 ```
 
 ## 2. 切分权重 (MP=64)
 
-使用多进程并行切分，`--num-workers` 控制并发数（默认等于 MP，内存不够可调小）：
+已切分好的 FP8 MP64 权重位于 MR-gpu50-new (10.7.66.194)：
+
+```
+/public-nfs/tj/0423/model/DSV4-fp8-mp64
+```
+
+如需自行切分，使用多进程并行切分，`--num-workers` 控制并发数（默认等于 MP，内存不够可调小）：
 
 ```bash
 python convert_0424_try_mp.py \
     --hf-ckpt-path /path/to/DeepSeek-V4-HF \
     --save-path /path/to/DeepSeek-V4-HF-FP8-MP64 \
-    --n-experts 256 \
+    --n-experts 384 \
     --model-parallel 64 \
-    --o-groups 8 \
+    --o-groups 16 \
     --num-workers 8
 ```
 
-## 3. 启动推理
-
-8 机 64 卡，每个节点 8 卡：
+## 3. 拉取镜像
 
 ```bash
-torchrun \
-    --nnodes=8 \
-    --nproc_per_node=8 \
-    --node_rank=$RANK \
-    --master_addr=$MASTER_ADDR \
-    --master_port=29500 \
-    generate_new_encoding.py \
-        --ckpt-path /path/to/DeepSeek-V4-HF-FP8-MP64 \
-        --config config.json \
-        --interactive \
-        --max-new-tokens 300
+docker pull harbor.baai.ac.cn/flagos-inner-models-release/lagrelease-mthreads-deepseek-v4-pro:202604242342
+```
+
+## 4. 启动容器
+
+在每个节点上执行：
+
+```bash
+docker run -itd --privileged --net host --name=flagos \
+    -w /workspace \
+    -v /public-nfs/:/public-nfs/ \
+    -v /public/:/public/ \
+    --env MTHREADS_VISIBLE_DEVICES=all \
+    --shm-size=80g \
+    harbor.baai.ac.cn/flagos-inner-models-release/lagrelease-mthreads-deepseek-v4-pro:202604242342 \
+    /bin/bash
+```
+
+## 5. 启动推理
+
+在每个节点的容器中执行：
+
+```bash
+cd /workspace/code/
+bash run_node.sh
 ```
